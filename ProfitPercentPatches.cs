@@ -99,7 +99,7 @@ namespace ProfitPercent
                     bdAbsolute.text = "";
                 }
                 GetProduction(portIndex, goodIndex);
-                if (___currentIsland.knownPrices[portIndex] == null || ___currentIsland.knownPrices[portIndex].buyPrices == null)
+                if (portIndex < 0 || portIndex >= ___currentIsland.knownPrices.Length || ___currentIsland.knownPrices[portIndex] == null || ___currentIsland.knownPrices[portIndex].buyPrices == null)
                 {
                     if (portIndex == ___currentIsland.GetPortIndex())
                     {   //current island
@@ -335,25 +335,32 @@ namespace ProfitPercent
         }
         private static void InitializeProd()
         {   //Initializes the portProd dictionary (so we don't have to run GetComponent every time)
+            portProd.Clear();
             Port[] ports = Object.FindObjectsOfType<Port>();
             foreach (Port port in ports)
             {
                 if (port.GetComponent<IslandMarket>() == null) continue;
-                portProd.Add(port.portIndex, port.island.GetComponent<IslandMarket>().production);
+                portProd[port.portIndex] = port.island.GetComponent<IslandMarket>().production;
             }
         }
         private static void InitializeGoods()
         {   //initializes the goods, goodNames and goodWeights arrays
-            goods = new Good[portProd[0].Length];
-            goodNames = new string[portProd[0].Length];
-            goodWeights = new float[portProd[0].Length];
-            for (int i = 0; i < goods.Length; i++)
+            if (portProd.Count == 0) return;
+
+            int length = 0;
+            foreach (var p in portProd.Values) { length = p.Length; break; }
+
+            goods = new Good[length];
+            goodNames = new string[length];
+            goodWeights = new float[length];
+            for (int i = 0; i < length; i++)
             {
-                ShipItem good = PrefabsDirectory.instance.GetGood(i);
-                if (good == null) continue;
-                goods[i] = good.GetComponent<Good>();
-                goodNames[i] = good.name;
-                goodWeights[i] = goods[i].GetCargoWeight();
+                ShipItem shipItem = PrefabsDirectory.instance.GetGood(i);
+                if (shipItem == null) continue;
+
+                goods[i] = shipItem.GetComponent<Good>();
+                goodNames[i] = shipItem.name;
+                goodWeights[i] = goods[i] != null ? goods[i].GetCargoWeight() : 0f;
             }
         }
 
@@ -368,6 +375,12 @@ namespace ProfitPercent
         {   //Gets the production status of the good in all ports
             //Useful symbols: ✓ ↗ ↘ ✗ ★ ‼
             //productionText.text += $"{portProd[portIndex][goodIndex]}"; //for debugging
+
+            if (!portProd.ContainsKey(portIndex) || goodIndex < 0 || goodIndex >= portProd[portIndex].Length)
+            {
+                productionText.text += "?\n";
+                return;
+            }
 
             if (portProd[portIndex][goodIndex] >= 8f)
             {   //great production
@@ -429,7 +442,7 @@ namespace ProfitPercent
                 for (int j = 0; j < bookmark[currentBookmark].Length; j++)
                 {   //iterate through all ports
                     int portIndex = bookmark[currentBookmark][j];
-                    if (currentMarket.knownPrices[portIndex] == null || currentMarket.knownPrices[portIndex].buyPrices == null)
+                    if (portIndex < 0 || portIndex >= currentMarket.knownPrices.Length || currentMarket.knownPrices[portIndex] == null || currentMarket.knownPrices[portIndex].buyPrices == null)
                     {
                         continue;
                     }
@@ -462,9 +475,32 @@ namespace ProfitPercent
                 }
             }
             //Write the best deals
-            bdPercent.text = $"• {Capitalize(goodNames[goodPercent])} to {Port.ports[portPercent].GetPortName()} will return a profit of {maxPercent}%!";
-            bdPerPound.text = $"• {Capitalize(goodNames[goodPerPound])} to {Port.ports[portPerPound].GetPortName()} will return a profit of {maxPerPound} per pound!";
-            bdAbsolute.text = $"• {Capitalize(goodNames[goodProfit])} to {Port.ports[portProfit].GetPortName()} will return a profit of {maxProfit} per unit!";
+            if (goodPercent != -1 && portPercent != -1 && goodNames[goodPercent] != null)
+            {
+                bdPercent.text = $"• {Capitalize(goodNames[goodPercent])} to {Port.ports[portPercent].GetPortName()} will return a profit of {maxPercent}%!";
+            }
+            else
+            {
+                bdPercent.text = "• No known deals for % profit";
+            }
+
+            if (goodPerPound != -1 && portPerPound != -1 && goodNames[goodPerPound] != null)
+            {
+                bdPerPound.text = $"• {Capitalize(goodNames[goodPerPound])} to {Port.ports[portPerPound].GetPortName()} will return a profit of {maxPerPound} per pound!";
+            }
+            else
+            {
+                bdPerPound.text = "• No known deals for per pound profit";
+            }
+
+            if (goodProfit != -1 && portProfit != -1 && goodNames[goodProfit] != null)
+            {
+                bdAbsolute.text = $"• {Capitalize(goodNames[goodProfit])} to {Port.ports[portProfit].GetPortName()} will return a profit of {maxProfit} per unit!";
+            }
+            else
+            {
+                bdAbsolute.text = "• No known deals for absolute profit";
+            }
         }
 
         //HELPER METHODS
@@ -483,6 +519,7 @@ namespace ProfitPercent
         }
         private static string Capitalize(string s)
         {   //capitalizes the first letter of a string
+            if (string.IsNullOrEmpty(s)) return s;
             return char.ToUpper(s[0]) + s.Substring(1);
         }
     }
