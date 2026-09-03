@@ -1,23 +1,20 @@
-﻿using System.Reflection;
+using System.Reflection;
 using BepInEx;
 using BepInEx.Configuration;
 using HarmonyLib;
-//poorly written by pr0skynesis (discord username)
+
+// poorly written by pr0skynesis (discord username)
+// unofficial community patches (v1.2.2+) clumsily maintained by crazybmanp
 
 namespace ProfitPercent
-{   /// <summary>
-    /// Patch Notes v1.2.0:
-    /// • Added auto receipt feature.
-    /// • Refactored the code.
-    /// • Fixed and improved the production informations.
-    /// </summary>
+{
     [BepInPlugin(pluginGuid, pluginName, pluginVersion)]
     public class ProfitPercentMain : BaseUnityPlugin
     {
         // Necessary plugin info
         public const string pluginGuid = "pr0skynesis.profitpercent";
         public const string pluginName = "Profit Percent";
-        public const string pluginVersion = "1.2.1";            //1.2.1 was a minor patch to fix incompatibility with updated savegames
+        public const string pluginVersion = "1.2.3";
 
         //COLORED TEXT
         public static ConfigEntry<bool> coloredTextConfig;

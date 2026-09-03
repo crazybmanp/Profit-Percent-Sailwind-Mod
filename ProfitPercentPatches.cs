@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using System;
 using System.Collections.Generic;
 using System.Reflection;
@@ -15,22 +15,19 @@ namespace ProfitPercent
     {
         #region TextMeshes
         //New columns
-        private static TextMesh productionText = new TextMesh();
-        private static TextMesh percentText = new TextMesh();
-        private static TextMesh perPoundText = new TextMesh();
-        private static TextMesh highlightBar = new TextMesh();
+        private static TextMesh productionText;
+        private static TextMesh perPoundText;
 
         //Vanilla columns
         private static TextMesh islandNames;
         private static TextMesh buyColumn;
         private static TextMesh goodName;
         private static TextMesh sellColumn;
-        private static TextMesh header;
         private static TextMesh profitColumn;
         private static TextMesh daysAgo;
-        private static TextMesh tabLines;
-        private static TextMesh horizontalLine;
+        private static TextMesh percentText;
         private static TextMesh conversionFees;
+        private static Transform highlightBar;
 
         //Best deals
         private static TextMesh bdBestDeals = new TextMesh();
@@ -48,6 +45,7 @@ namespace ProfitPercent
         private const float spacing = 0.073f;    //spacing for the highlight bar
         private static float[] goodWeights;
         private static string[] goodNames;
+        private static float[] colX = new float[7]; //computed column X positions [0]=daysAgo [1]=P. [2]=buy [3]=sell [4]=profit [5]=% [6]=p.pound
 
         //PATCHES
         public static void AwakePatch(EconomyUI __instance)
@@ -60,8 +58,8 @@ namespace ProfitPercent
             Transform detailsUI = __instance.transform.Find("good details (right panel)").Find("details UI");
 
             //Assign vanilla columns references
-            GetVanillaColumns(detailsUI);
-            AddModColumns(detailsUI);
+            GetVanillaColumns(__instance, detailsUI);
+            AddModColumns(__instance, detailsUI);
             DisableUnusedUI(detailsUI);
 
             //Cache port production values
@@ -71,54 +69,57 @@ namespace ProfitPercent
         {   //Main patch for the trade UI - This is called every time the page is refreshed
 
             //Capitalise the good name
-            goodName.text = Capitalize(goodName.text);
+            if (goodName != null) goodName.text = Capitalize(goodName.text);
 
-            //CREATE THE UI
-            InitializeUI();
+            if (productionText != null) productionText.text = "";
+            if (perPoundText != null) perPoundText.text = "";
+            
             if (goods == null) InitializeGoods();
+
+            if (ProfitPercentMain.showBestDealsConfig.Value && bdBestDeals != null)
+            {
+                bdBestDeals.text = "<color=#4D0000>★ Best Deals! ★</color>";
+                FindBestDeals(___bookmarkIslands, ___currentBookmark, ___currentIsland);
+            }
+            else if (bdBestDeals != null)
+            {
+                bdBestDeals.text = "";
+                bdPercent.text = "";
+                bdPerPound.text = "";
+                bdAbsolute.text = "";
+            }
+
+            if (profitColumn == null || percentText == null) return;
+
+            string[] nativeProfits = profitColumn.text.Split('\n');
+            string[] nativePercents = percentText.text.Split('\n');
+            
+            string newProfit = "";
+            string newPercent = "";
+
+            int goodIndex = EconomyUI.instance.currentSelectedGood;
+
             for (int i = 0; i < ___bookmarkIslands[___currentBookmark].Length; i++)
             {
                 int portIndex = ___bookmarkIslands[___currentBookmark][i];
-                int goodIndex = EconomyUI.instance.currentSelectedGood;
-
+                
                 if (portIndex == ___currentIsland.GetPortIndex())
                 {
                     SetHighlightBar(i);
                 }
 
-                if (ProfitPercentMain.showBestDealsConfig.Value)
-                {
-                    bdBestDeals.text = "<color=#4D0000>★ Best Deals! ★</color>";
-                    FindBestDeals(___bookmarkIslands, ___currentBookmark, ___currentIsland);
-                }
-                else
-                {
-                    bdBestDeals.text = "";
-                    bdPercent.text = "";
-                    bdPerPound.text = "";
-                    bdAbsolute.text = "";
-                }
                 GetProduction(portIndex, goodIndex);
+
+                string nProf = i < nativeProfits.Length ? nativeProfits[i] : "";
+                string nPerc = i < nativePercents.Length ? nativePercents[i] : "";
+                
+                if (string.IsNullOrEmpty(nProf) && string.IsNullOrEmpty(nPerc)) continue; // skip trailing empty lines
+
                 if (portIndex < 0 || portIndex >= ___currentIsland.knownPrices.Length || ___currentIsland.knownPrices[portIndex] == null || ___currentIsland.knownPrices[portIndex].buyPrices == null)
                 {
-                    if (portIndex == ___currentIsland.GetPortIndex())
-                    {   //current island
-                        if (ProfitPercentMain.coloredTextConfig.Value)
-                        {
-                            islandNames.text += $"<color=#4D0000>• {Port.ports[portIndex].GetPortName()}</color>\n";
-                        }
-                        else
-                        {
-                            islandNames.text += $"• {Port.ports[portIndex].GetPortName()}\n";
-                        }
-                    }
-                    else
-                    {
-                        islandNames.text += $"{Port.ports[portIndex].GetPortName()}\n";
-                    }
-                    profitColumn.text += $"?\n";
-                    percentText.text += $"?\n";
-                    perPoundText.text += $"?\n";
+                    perPoundText.text += "?\n";
+                    newProfit += nProf.Replace("|", "").Trim() + "\n";
+                    newPercent += nPerc.Replace("|", "").Trim() + "\n";
                 }
                 else
                 {
@@ -126,88 +127,42 @@ namespace ProfitPercent
                     int sellp = SellP(portIndex, goodIndex);
                     int profit = sellp - buyp;
 
-                    //Profit percent
-                    float profitPercent = Mathf.Round(((float)profit / buyp) * 100f);
-
-                    //Profit per pound
+                    float profitPercent = buyp != 0 ? Mathf.Round(((float)profit / buyp) * 100f) : float.PositiveInfinity;
                     float cargoWeight = goodWeights[goodIndex];
                     float profitPerPound = (float)Math.Round(profit / cargoWeight, 2);
 
+                    string cleanProf = nProf.Replace("|", "").Trim();
+                    string cleanPerc = nPerc.Replace("|", "").Trim();
+
                     if (ProfitPercentMain.coloredTextConfig.Value)
-                    {   //With colors
-                        //Island names
-                        if (portIndex == ___currentIsland.GetPortIndex())
-                        {   //current island
-                            islandNames.text += $"<color=#4D0000>• {Port.ports[portIndex].GetPortName()}</color>\n";
-                        }
-                        else
-                        {   //not the currentIsland
-                            islandNames.text += $"{Port.ports[portIndex].GetPortName()}\n";
-                        }
-                        int higherThreshold = ProfitPercentMain.blueThresholdConfig.Value;
-                        int lowerThreshold = ProfitPercentMain.greenThresholdConfig.Value;
-                        if (ProfitPercentMain.blueThresholdConfig.Value < ProfitPercentMain.greenThresholdConfig.Value)
-                        {   //make sure the thresholds are used correctly by switching them around if necessary
-                            higherThreshold = ProfitPercentMain.greenThresholdConfig.Value;
-                            lowerThreshold = ProfitPercentMain.blueThresholdConfig.Value;
-                        }
-                        if (float.IsInfinity(profitPercent))
-                        {   //if buyp is zero (good not sold in the current port), we get infinite profit. In that case we add a yellow -.
-                            profitColumn.text += $"<color=#CC7F00>- </color>\n";
-                            percentText.text += $"<color=#CC7F00>- </color>\n";
-                            perPoundText.text += $"<color=#CC7F00>- </color>\n";
-                        }
-                        else if (profitPercent > higherThreshold)
-                        {   //blue color #051139
-                            profitColumn.text += $"<color=#051139>{profit}</color>\n";
-                            percentText.text += $"<color=#051139>{profitPercent}<size=40%>%</size></color>\n";
-                            perPoundText.text += $"<color=#051139>{profitPerPound}</color>\n";
-                        }
-                        else if (profitPercent > lowerThreshold)
-                        {   //green color #003300 // old color was #113905
-                            profitColumn.text += $"<color=#003300>{profit}</color>\n";
-                            percentText.text += $"<color=#003300>{profitPercent}<size=40%>%</size></color>\n";
-                            perPoundText.text += $"<color=#003300>{profitPerPound}</color>\n";
-                        }
-                        else if (profitPercent < 0f)
-                        {   //red color #4D0000 //old color was #7C0000
-                            profitColumn.text += $"<color=#4D0000>{profit}</color>\n";
-                            percentText.text += $"<color=#4D0000>{profitPercent}<size=40%>%</size></color>\n";
-                            perPoundText.text += $"<color=#4D0000>{profitPerPound}</color>\n";
-                        }
-                        else // between the green threshold and zero color is yellow
-                        {   //yellow color #CC7F00
-                            profitColumn.text += $"<color=#CC7F00>{profit}</color>\n";
-                            percentText.text += $"<color=#CC7F00>{profitPercent}<size=40%>%</size></color>\n";
-                            perPoundText.text += $"<color=#CC7F00>{profitPerPound}</color>\n";
-                        }
+                    {
+                        int higherThreshold = Math.Max(ProfitPercentMain.blueThresholdConfig.Value, ProfitPercentMain.greenThresholdConfig.Value);
+                        int lowerThreshold = Math.Min(ProfitPercentMain.blueThresholdConfig.Value, ProfitPercentMain.greenThresholdConfig.Value);
+
+                        string hexColor = "";
+                        if (float.IsInfinity(profitPercent)) hexColor = "#CC7F00";
+                        else if (profitPercent > higherThreshold) hexColor = "#051139";
+                        else if (profitPercent > lowerThreshold) hexColor = "#003300";
+                        else if (profitPercent < 0f) hexColor = "#4D0000";
+                        else hexColor = "#CC7F00";
+
+                        newProfit += $"<color={hexColor}>{cleanProf}</color>\n";
+                        newPercent += $"<color={hexColor}>{cleanPerc}</color>\n";
+                        perPoundText.text += $"<color={hexColor}>{(float.IsInfinity(profitPercent) ? "- " : profitPerPound.ToString())}</color>\n";
                     }
                     else
-                    {   //Without colors
-                        //Island names
-                        if (portIndex == ___currentIsland.GetPortIndex())
-                        {   //current island
-                            islandNames.text += $"• {Port.ports[portIndex].GetPortName()}\n";
-                        }
-                        else
-                        {   //not the currentIsland
-                            islandNames.text += $"{Port.ports[portIndex].GetPortName()}\n";
-                        }
-                        if (float.IsInfinity(profitPercent))
-                        {   //if buyp is zero (good not sold in the current port), we get infinite profit. in that case we add a yellow -.
-                            profitColumn.text += $"- \n";
-                            percentText.text += $"- \n";
-                            perPoundText.text += $"- \n";
-                        }
-                        else
-                        {
-                            profitColumn.text += $"{profit}\n";
-                            percentText.text += $"{profitPercent}<size=40%>%</size>\n";
-                            perPoundText.text += $"{profitPerPound}\n";
-                        }
+                    {
+                        newProfit += cleanProf + "\n";
+                        newPercent += cleanPerc + "\n";
+                        perPoundText.text += (float.IsInfinity(profitPercent) ? "- \n" : profitPerPound.ToString() + "\n");
                     }
                 }
             }
+
+            profitColumn.text = newProfit;
+            percentText.text = newPercent;
+            if (buyColumn != null) buyColumn.text = buyColumn.text.Replace("|", "").Replace(" ", "");
+            if (sellColumn != null) sellColumn.text = sellColumn.text.Replace("|", "").Replace(" ", "");
         }
         public static void ButtonPatch(EconomyUIButton __instance)
         {   //Automatically get the receipt when closing the trade UI
@@ -220,108 +175,236 @@ namespace ProfitPercent
         }
 
         //INITIALISATION
-        private static void GetVanillaColumns(Transform detailsUI)
+        private static void GetVanillaColumns(EconomyUI instance, Transform detailsUI)
         {   //gets the references to the vanilla columns and edits them if necessary
             
-            islandNames = detailsUI.GetChild(2).GetComponent<TextMesh>();
+            islandNames = (TextMesh)AccessTools.Field(typeof(EconomyUI), "textIslandNames").GetValue(instance);
+            buyColumn = (TextMesh)AccessTools.Field(typeof(EconomyUI), "textBuyPrice").GetValue(instance);
+            goodName = (TextMesh)AccessTools.Field(typeof(EconomyUI), "textGoodName").GetValue(instance);
+            sellColumn = (TextMesh)AccessTools.Field(typeof(EconomyUI), "textSellPrice").GetValue(instance);
+            profitColumn = (TextMesh)AccessTools.Field(typeof(EconomyUI), "textProfit").GetValue(instance);
+            daysAgo = (TextMesh)AccessTools.Field(typeof(EconomyUI), "textDaysAgo").GetValue(instance);
+            percentText = (TextMesh)AccessTools.Field(typeof(EconomyUI), "textProfitPercent").GetValue(instance);
+            conversionFees = (TextMesh)AccessTools.Field(typeof(EconomyUI), "textConversionInfo").GetValue(instance);
+
             islandNames.characterSize = charSize;
-            Move(islandNames.transform, 0.23f);
-
-            buyColumn = detailsUI.GetChild(3).GetComponent<TextMesh>();
             buyColumn.characterSize = charSize;
-            Move(buyColumn.transform, -0.11f);
-            goodName = detailsUI.GetChild(6).GetComponent<TextMesh>();
-
-            sellColumn = detailsUI.GetChild(7).GetComponent<TextMesh>();
             sellColumn.characterSize = charSize;
-            Move(sellColumn.transform, -0.27f);
-
-            //header
-            header = detailsUI.GetChild(8).GetComponent<TextMesh>();
-            header.characterSize = 0.85f;
-            header.text = "days ago  P.    buy     sell     profit      %    p. pound";
-
-            profitColumn = detailsUI.GetChild(9).GetComponent<TextMesh>();
             profitColumn.characterSize = charSize;
-            Move(profitColumn.transform, -0.45f);
-
-            daysAgo = detailsUI.GetChild(11).GetComponent<TextMesh>();
             daysAgo.characterSize = charSize;
-            Move(daysAgo.transform, 0.133f);
-
-            //table lines
-            tabLines = detailsUI.GetChild(13).GetComponent<TextMesh>();
-            tabLines.text = "        |   |       |       |        |       |";
-
-            horizontalLine = detailsUI.GetChild(14).GetComponent<TextMesh>();
-            Move(horizontalLine.transform, -0.94f);
-
-            conversionFees = detailsUI.GetChild(16).GetComponent<TextMesh>();
+            percentText.characterSize = charSize;
             conversionFees.characterSize = charSize;
+
+            // Col 0 anchors on daysAgo's native position (adapts to any beta prefab change).
+            // Col 6 anchors on a chosen right-page boundary to fill the visual space.
+            // Pushing rightBound more positive pulls the grid to the left, away from the right edge.
+            // Note: textProfitPercent in the beta is placed far off-screen by default, so we
+            // deliberately do NOT use its native position to drive the step calculation.
+            const float rightBound = -0.65f;                         // pulled left away from right margin
+            float leftX = daysAgo.transform.localPosition.x;         // col 0 — adapt to native beta position
+            float step  = (rightBound - leftX) / 6f;                 // 6 equal intervals for 7 columns (step is negative: X decreases rightward)
+
+            // Store all 7 column positions
+            colX[0] = leftX;                // days ago
+            colX[1] = leftX + step * 1f;   // P. (production) — mod column
+            colX[2] = leftX + step * 2f;   // buy
+            colX[3] = leftX + step * 3f;   // sell
+            colX[4] = leftX + step * 4f;   // profit
+            colX[5] = leftX + step * 5f;   // %
+            colX[6] = rightBound;           // p. pound (== leftX + step * 6f)
+
+            float midX = (colX[0] + colX[6]) / 2f;
+
+            // Force all columns to be UpperCenter aligned. The vanilla columns had mixed alignments 
+            // (e.g. right-aligned for numbers, left-aligned for %), which caused them to visually
+            // offset from our colX midlines and bleed into the pipes.
+            daysAgo.anchor = TextAnchor.UpperCenter;
+            daysAgo.alignment = TextAlignment.Center;
+            buyColumn.anchor = TextAnchor.UpperCenter;
+            buyColumn.alignment = TextAlignment.Center;
+            sellColumn.anchor = TextAnchor.UpperCenter;
+            sellColumn.alignment = TextAlignment.Center;
+            profitColumn.anchor = TextAnchor.UpperCenter;
+            profitColumn.alignment = TextAlignment.Center;
+            percentText.anchor = TextAnchor.UpperCenter;
+            percentText.alignment = TextAlignment.Center;
+
+            // Move all columns to computed positions (textProfitPercent moved to colX[5] from its off-screen native position)
+            Move(daysAgo.transform,      colX[0]);
+            Move(buyColumn.transform,    colX[2]);
+            Move(sellColumn.transform,   colX[3]);
+            Move(profitColumn.transform, colX[4]);
+            Move(percentText.transform,  colX[5]);
+
+            Move(islandNames.transform, 0.23f);
             Move(conversionFees.transform, 0.64f, -0.8f);
-        }
-        private static void AddModColumns(Transform detailsUI)
-        {   //create the additional columns for the mod
+
+
+
+
+            // Locate native grid elements
+            List<TextMesh> nativePipes = new List<TextMesh>();
+            TextMesh horizontalLine = null;
+
+            foreach (Component comp in detailsUI.GetComponentsInChildren<Component>(true))
+            {
+                if (comp.GetType().Name.Contains("Text"))
+                {
+                    PropertyInfo prop = comp.GetType().GetProperty("text");
+                    if (prop != null)
+                    {
+                        string text = prop.GetValue(comp, null) as string;
+                        if (!string.IsNullOrEmpty(text))
+                        {
+                            string lowerText = text.ToLower();
+                            if (lowerText.Contains("days ago") && lowerText.Contains("profit") && comp.name != "mod_header")
+                            {
+                                TextMesh header = (TextMesh)comp;
+                                header.text = ""; // clear monolithic text
+                                
+                                string[] headers = { "days ago", "P.", "buy", "sell", "profit", "%", "p. pound" };
+                                for (int i = 0; i < 7; i++)
+                                {
+                                    TextMesh h = Object.Instantiate(header, header.transform.parent);
+                                    h.name = "mod_header_" + i;
+                                    h.text = headers[i];
+                                    h.characterSize = 0.85f;
+                                    h.anchor = TextAnchor.UpperCenter;
+                                    Move(h.transform, colX[i]); // Align perfectly with data column
+                                }
+                            }
+                            else if (lowerText.Contains("|"))
+                            {
+                                string pure = lowerText.Replace("|", "").Replace(" ", "").Replace("\n", "").Replace("\r", "").Trim();
+                                if (pure.Length == 0) 
+                                {
+                                    nativePipes.Add((TextMesh)comp);
+                                }
+                            }
+                            else if (lowerText.Contains("___") || lowerText.Contains("---") || (text.Replace("_", "").Replace("-", "").Length < 5 && text.Length > 20))
+                            {
+                                horizontalLine = (TextMesh)comp;
+                                horizontalLine.anchor = TextAnchor.UpperCenter;
+                                Move(horizontalLine.transform, midX);
+                                horizontalLine.text = "------------------------------------------------------------------------------------------------";
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fix the pipe grid
+            // Hide the native standalone pipe lines to prevent rogue vertical lines
+            foreach (TextMesh t in nativePipes)
+            {
+                t.gameObject.SetActive(false); 
+            }
+
+            // Create solid vertical lines
+            TextMesh pipeTemplate = Object.Instantiate(daysAgo, detailsUI);
+            pipeTemplate.name = "mod_pipeTemplate";
             
-            productionText = Object.Instantiate(buyColumn, detailsUI);
+            // We use a long string of pipes and squeeze them together vertically to form a solid line
+            pipeTemplate.text = "|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|";
+            pipeTemplate.lineSpacing = 0.5f; 
+            pipeTemplate.anchor = TextAnchor.UpperCenter;
+
+            List<TextMesh> cleanPipes = new List<TextMesh>();
+            for (int p = 0; p < 6; p++)
+            {
+                TextMesh cp = Object.Instantiate(pipeTemplate, detailsUI);
+                cp.name = "mod_clonedPipe_" + p;
+                cleanPipes.Add(cp);
+            }
+            pipeTemplate.gameObject.SetActive(false);
+
+            if (cleanPipes.Count >= 6)
+            {
+                Move(cleanPipes[0].transform, (colX[0] + colX[1]) / 2f);
+                Move(cleanPipes[1].transform, (colX[1] + colX[2]) / 2f);
+                Move(cleanPipes[2].transform, (colX[2] + colX[3]) / 2f);
+                Move(cleanPipes[3].transform, (colX[3] + colX[4]) / 2f);
+                Move(cleanPipes[4].transform, (colX[4] + colX[5]) / 2f);
+                Move(cleanPipes[5].transform, (colX[5] + colX[6]) / 2f);
+            }
+        }
+        private static void AddModColumns(EconomyUI instance, Transform detailsUI)
+        {   //create the additional columns for the mod
+            // colX[0-6] were computed and native columns moved in GetVanillaColumns.
+            // This method only creates mod-specific columns and layout elements.
+
+            float midX = (colX[0] + colX[6]) / 2f;  // true centre of the full 7-column span
+
+            // Production column (P.) — mod-created, was missing from the current broken code
+            if (productionText == null) productionText = Object.Instantiate(buyColumn, detailsUI);
             productionText.name = "productionText";
             productionText.characterSize = charSize;
-            Move(productionText.transform, 0.050f);
+            productionText.anchor = TextAnchor.UpperCenter;
+            productionText.alignment = TextAlignment.Center;
+            Move(productionText.transform, colX[1]);
 
-            percentText = Object.Instantiate(buyColumn, detailsUI);
-            percentText.name = "percentText";
-            percentText.characterSize = charSize;
-            Move(percentText.transform, -0.61f);
+            // percentText is the native beta textProfitPercent.
+            // It is completely configured and positioned in GetVanillaColumns.
 
-            perPoundText = Object.Instantiate(buyColumn, detailsUI);
+            // p. pound column — mod-created
+            if (perPoundText == null) perPoundText = Object.Instantiate(buyColumn, detailsUI);
             perPoundText.name = "perPoundText";
             perPoundText.characterSize = charSize;
-            Move(perPoundText.transform, -0.78f);
+            perPoundText.anchor = TextAnchor.UpperCenter;
+            perPoundText.alignment = TextAlignment.Center;
+            Move(perPoundText.transform, colX[6]);
 
-            //best deals sections
-            bdBestDeals = Object.Instantiate(buyColumn, detailsUI);
+            //best deals sections - placed on the left page margin
+            if (bdBestDeals == null) bdBestDeals = Object.Instantiate(buyColumn, detailsUI);
             bdBestDeals.name = "bdBestDeals";
             bdBestDeals.characterSize = 1f;
             bdBestDeals.text = "<color=#4D0000>★ Best Deals! ★</color>";
-            bdBestDeals.transform.Rotate(0f, 0f, 15f);
+            bdBestDeals.transform.localRotation = Quaternion.identity; // Reset first
+            bdBestDeals.transform.Rotate(0f, 180f, 15f); // Apply correct native flip + tilt
             Move(bdBestDeals.transform, 0.74f, -0.15f);
             bdBestDeals.anchor = TextAnchor.MiddleLeft;
+            bdBestDeals.alignment = TextAlignment.Left;
 
-
-            bdPercent = Object.Instantiate(buyColumn, detailsUI);
+            if (bdPercent == null) bdPercent = Object.Instantiate(buyColumn, detailsUI);
             bdPercent.name = "bdPercent";
             bdPercent.characterSize = 0.7f;
-            bdPercent.text = "Salmon from here to there will give X in profit";
+            bdPercent.text = "";
             Move(bdPercent.transform, 0.64f, -0.20f);
             bdPercent.anchor = TextAnchor.MiddleLeft;
+            bdPercent.alignment = TextAlignment.Left;
 
-            bdPerPound = Object.Instantiate(buyColumn, detailsUI);
+            if (bdPerPound == null) bdPerPound = Object.Instantiate(buyColumn, detailsUI);
             bdPerPound.name = "bdPerPound";
             bdPerPound.characterSize = 0.7f;
-            bdPerPound.text = "Salmon from here to there will give X in profit";
+            bdPerPound.text = "";
             Move(bdPerPound.transform, 0.64f, -0.25f);
             bdPerPound.anchor = TextAnchor.MiddleLeft;
+            bdPerPound.alignment = TextAlignment.Left;
 
-            bdAbsolute = Object.Instantiate(buyColumn, detailsUI);
+            if (bdAbsolute == null) bdAbsolute = Object.Instantiate(buyColumn, detailsUI);
             bdAbsolute.name = "bdAbsolute";
             bdAbsolute.characterSize = 0.7f;
-            bdAbsolute.text = "Salmon from here to there will give X in profit";
+            bdAbsolute.text = "";
             Move(bdAbsolute.transform, 0.64f, -0.30f);
             bdAbsolute.anchor = TextAnchor.MiddleLeft;
+            bdAbsolute.alignment = TextAlignment.Left;
 
-            //highlight bar
-            highlightBar = Object.Instantiate(buyColumn, detailsUI);
+            //restore original text highlight bar
+            if (highlightBar == null) highlightBar = Object.Instantiate(buyColumn, detailsUI).transform;
             highlightBar.name = "highlightBar";
-            highlightBar.characterSize = 1f;
-            highlightBar.text = "┌───────────────────────────────────┐\n└───────────────────────────────────┘";
-            highlightBar.lineSpacing = 0.9f;
-            highlightBar.color = new Color(0.25f, 0f, 0f);
-            Move(highlightBar.transform, 0.64f, 0.622f);
-            highlightBar.anchor = TextAnchor.MiddleLeft;
+            TextMesh hbText = highlightBar.GetComponent<TextMesh>();
+            hbText.characterSize = 1f;
+            hbText.text = "┌───────────────────────────────────┐\n└───────────────────────────────────┘";
+            hbText.lineSpacing = 0.9f;
+            hbText.color = new Color(0.25f, 0f, 0f);
+            Move(highlightBar.transform, midX, 0.622f);
+            hbText.anchor = TextAnchor.MiddleCenter;
         }
+
         private static void DisableUnusedUI(Transform detailsUI)
         {   //disables the vanilla highlight bar since it's not used
-            detailsUI.Find("highlight (parent)").gameObject.SetActive(false);
+            Transform nativeHighlight = detailsUI.Find("highlight (parent)");
+            if (nativeHighlight != null) nativeHighlight.gameObject.SetActive(false);
         }
         private static void InitializeUI()
         {   //Initializes the columns we'll edit and the disables the vanilla highlight bar

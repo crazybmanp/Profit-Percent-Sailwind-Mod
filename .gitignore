@@ -15,3 +15,13 @@ thunderstore/
 # Ignore other unnecessary files
 *.dll
 *.exe
+
+# Ignore local paths
+Directory.Build.props
+
+# Ignore local packaged builds
+builds/
+
+# AI
+AGENTS.md
+docs/
